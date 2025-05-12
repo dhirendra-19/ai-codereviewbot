@@ -1,0 +1,8 @@
+flask
+python-dotenv
+pygithub
+openai
+transformers
+torch
+flask-session
+regex

@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>AI Code Review</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>AI Code Reviewer</h1>
+            <div class="options">
+                <button class="option-btn" onclick="showUpload()">📁 Upload Code</button>
+                <button class="option-btn" onclick="showGithub()">🐙 Connect GitHub</button>
+            </div>
+        </header>
+
+        <main>
+            <section id="upload-section" class="hidden">
+                <div class="file-upload">
+                    <input type="file" id="code-file" name="file" accept=".py,.js,.java,.c,.cpp">
+                    <button class="analyze-btn" onclick="submitReview()">Analyze Code</button>
+                </div>
+            </section>
+
+            <section id="github-section" class="hidden">
+                <div class="github-connect">
+                    <input type="text" id="repo-url" placeholder="owner/repo (e.g.: octocat/Hello-World)">
+                    <button class="github-btn" onclick="submitGithub()">Fetch Repository</button>
+                </div>
+                <div class="github-pr-review">
+                    <h2>Review a GitHub Pull Request</h2>
+                    <input type="text" id="repo-name" placeholder="Repository (owner/repo)">
+                    <input type="number" id="pr-number" placeholder="PR Number">
+                    <button class="github-btn" onclick="submitPRReview()">Review PR</button>
+                  </div>
+            </section>
+
+            
+            <section id="chat-interface" class="hidden">
+                <div class="chat-wrapper">
+                    <div id="chat-messages" class="chat-messages"></div>
+                    <div class="chat-input-group">
+                        <input type="text" id="user-question" 
+                               placeholder="Ask about the code review..." 
+                               onkeypress="handleKeyPress(event)">
+                        <button class="send-btn" onclick="sendQuestion()">Send</button>
+                    </div>
+                </div>
+            </section>
+
+            <section id="suggestions-container" class="hidden">
+                <h2>🛠 Code Suggestions</h2>
+                <div id="code-suggestions" class="code-suggestions"></div>
+            </section>
+        </main>
+    </div>
+
+    <script>
+        let currentCodeDiff = ''; // Store the original code diff for follow-up questions
+
+        function showUpload() {
+            document.getElementById('upload-section').classList.remove('hidden');
+            document.getElementById('github-section').classList.add('hidden');
+            document.getElementById('chat-interface').classList.add('hidden');
+            document.getElementById('suggestions-container').classList.add('hidden');
+            // Optionally clear previous messages
+            document.getElementById('chat-messages').innerHTML = '';
+            document.getElementById('code-suggestions').innerHTML = '';
+        }
+
+        function showGithub() {
+            document.getElementById('github-section').classList.remove('hidden');
+            document.getElementById('upload-section').classList.add('hidden');
+            document.getElementById('chat-interface').classList.add('hidden');
+            document.getElementById('suggestions-container').classList.add('hidden');
+            // Optionally clear previous messages
+            document.getElementById('chat-messages').innerHTML = '';
+            document.getElementById('code-suggestions').innerHTML = '';
+        }   
+        
+
+        async function submitReview() {
+            const fileInput = document.getElementById('code-file');
+            if (!fileInput.files.length) {
+                alert('Please select a file.');
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append('file', fileInput.files[0]);
+
+            try {
+                const response = await fetch('/review', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+                
+                // Store the code diff for follow-up questions
+                currentCodeDiff = data.code_diff || '';
+                
+                // Show chat interface
+                document.getElementById('chat-interface').classList.remove('hidden');
+                document.getElementById('suggestions-container').classList.remove('hidden');
+                
+                displayReview(data.review);
+                if (data.code_suggestions && data.code_suggestions.length > 0) {
+                displayCodeSuggestions(data.code_suggestions);
+                }
+            } catch (err) {
+                showError("An error occurred while uploading the file.");
+            }
+            
+
+        }
+
+
+        async function submitGithub() {
+    const repoUrl = document.getElementById('repo-url').value;
+    if (!repoUrl) {
+        alert('Please enter a GitHub repository URL.');
+        return;
+    }
+    const formData = new FormData();
+    formData.append('github_url', repoUrl);
+
+    try {
+        const response = await fetch('/review', {
+            method: 'POST',
+            body: formData
+        });
+        const data = await response.json();
+
+        // Store the code diff for follow-up questions
+        currentCodeDiff = data.code_diff || '';
+
+        // Show chat interface
+        document.getElementById('chat-interface').classList.remove('hidden');
+        document.getElementById('suggestions-container').classList.remove('hidden');
+
+        displayReview(data.review);
+        if (data.code_suggestions && data.code_suggestions.length > 0) {
+        displayCodeSuggestions(data.code_suggestions);
+        }
+    } catch (err) {
+        showError("An error occurred while fetching from GitHub.");
+    }
+    }
+
+
+        async function submitPR() {
+        const repoName = document.getElementById('repo-name').value;
+        const prNumber = document.getElementById('pr-number').value;
+        
+        const response = await fetch('/pull_request_review', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                repo_name: repoName,
+                pr_number: prNumber
+            })
+        });
+        // Handle response
+        const data = await response.json();
+
+    if (response.ok && data.message) {
+        // Success: show confirmation to the user
+        alert(data.message);
+        // Or update your UI, e.g.:
+        // document.getElementById('chat-messages').innerHTML += `<div class="message assistant">${data.message}</div>`;
+    } else if (data.error) {
+        // Error: show error to the user
+        alert("Error: " + data.error);
+        // Or update your UI, e.g.:
+        // document.getElementById('chat-messages').innerHTML += `<div class="error-message">${data.error}</div>`;
+    } else {
+        // Unexpected response
+        alert("An unexpected error occurred.");
+    }
+}
+    
+
+        async function sendQuestion() {
+            const questionInput = document.getElementById('user-question');
+            const question = questionInput.value.trim();
+            
+            if (!question) return;
+
+            // Add user question to chat
+            addMessage('user', question);
+            questionInput.value = '';
+
+            try {
+                const response = await fetch('/chat', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        message: question,
+                        code_diff: currentCodeDiff
+                    })
+                });
+                
+                const data = await response.json();
+                
+                // Add bot response
+                addMessage('assistant', data.response);
+                
+                // Display code suggestions if any
+                if (data.code_suggestions && data.code_suggestions.length > 0) {
+                    displayCodeSuggestions(data.code_suggestions);
+                }
+                
+            } catch (err) {
+                showError("An error occurred while processing your question.");
+            }
+        }
+
+  
+        function submitPRReview() {
+            const repoName = document.getElementById('repo-name').value;
+            const prNumber = document.getElementById('pr-number').value;
+
+            fetch('/pull_request_review', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    repo_name: repoName,
+                    pr_number: prNumber
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) alert("Error: " + data.error);
+                else alert("Review posted successfully!");
+            })
+            .catch(error => console.error('Error:', error));
+        }
+
+
+        
+        function displayReview(review) {
+            const chatMessages = document.getElementById('chat-messages');
+            chatMessages.innerHTML = marked.parse(review);
+        }
+
+        function addMessage(role, content) {
+            const chatMessages = document.getElementById('chat-messages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${role}`;
+            messageDiv.innerHTML = marked.parse(content);
+            chatMessages.appendChild(messageDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        function displayCodeSuggestions(suggestions) {
+            const suggestionsDiv = document.getElementById('code-suggestions');
+            suggestionsDiv.innerHTML = suggestions.map(code => 
+            `<div class="code-snippet"><pre><code>${escapeHtml(code)}</code></pre></div>`
+                ).join('');
+        }
+
+        function escapeHtml(text) {
+            const map = {
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#039;',
+            };
+            return text.replace(/[&<>"']/g, function(m) { return map[m]; });
+        }
+
+        function showError(message) {
+            const errorDiv = document.createElement('div');
+            errorDiv.className = 'error-message';
+            errorDiv.textContent = message;
+            document.getElementById('chat-messages').appendChild(errorDiv);
+        }
+
+        function handleKeyPress(event) {
+        if (event.key === 'Enter') {
+            sendQuestion();
+        }
+        }
+    </script>
+</body>
+</html>
